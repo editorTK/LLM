@@ -1,0 +1,180 @@
+<!DOCTYPE html>
+<html lang="es" class="h-full bg-black">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Asistente</title>
+
+  <!-- Tailwind -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            ink: "#0a0a0a",
+            pane: "#121212",
+            line: "#1f1f1f",
+            text: "#eaeaea",
+            sub: "#9a9a9a",
+          }
+        }
+      }
+    }
+  </script>
+
+  <!-- Estilos -->
+  <link rel="stylesheet" href="styles.css" />
+
+  <!-- Markdown + Sanitizer -->
+  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/dompurify@3.1.7/dist/purify.min.js"></script>
+
+  <!-- Puter.js -->
+  <script src="https://js.puter.com/v2/"></script>
+</head>
+
+<body class="h-full text-text antialiased">
+  <div class="min-h-screen flex flex-col bg-black">
+
+    <!-- Top bar -->
+    <header class="sticky top-0 z-30 bg-black/80 backdrop-blur border-b border-line">
+      <div class="max-w-5xl mx-auto px-4 py-3 flex items-center justify-between">
+        <button id="menuBtn" class="p-2 rounded-lg border border-line hover:bg-pane" aria-label="Abrir menú">
+          <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" stroke="currentColor"><path d="M3 6h18M3 12h18M3 18h18"/></svg>
+        </button>
+        <div class="text-sm text-sub">Asistente</div>
+        <button id="signInBtn" class="p-2 rounded-lg border border-line hover:bg-pane hidden">Iniciar sesión</button>
+      </div>
+    </header>
+
+    <!-- Lateral (drawer) -->
+<aside id="sidebar" class="fixed inset-y-0 left-0 w-80 max-w-[85%] bg-black border-r border-line z-40 translate-x-[-100%] transition-transform">
+  <div class="h-full flex flex-col">
+    <div class="px-4 py-3 border-b border-line">
+      <div class="flex items-center gap-2">
+        <div class="font-semibold flex-1">Tus chats</div>
+        <button id="prefsBtn" class="px-2 py-1 text-xs border border-line rounded-lg hover:bg-pane">Personalización</button>
+        <button id="newChatBtn" class="px-2 py-1 text-xs border border-line rounded-lg hover:bg-pane">Nuevo</button>
+        <button id="closeSidebarBtn" class="p-2 rounded-lg border border-line hover:bg-pane" aria-label="Cerrar">
+          <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" stroke="currentColor"><path d="M6 6l12 12M18 6L6 18"/></svg>
+        </button>
+      </div>
+      <div class="mt-3">
+        <input id="chatSearch" type="text" placeholder="Buscar chats…" class="w-full rounded-lg bg-pane border border-line px-3 py-2 text-sm placeholder-sub">
+      </div>
+    </div>
+    <div id="chatList" class="flex-1 overflow-y-auto divide-y divide-line"></div>
+  </div>
+</aside>
+<div id="sidebarOverlay" class="fixed inset-0 bg-black/40 z-30 hidden"></div>
+    <!-- Hero -->
+    <section id="hero" class="flex-1">
+      <div class="max-w-3xl mx-auto px-4 py-10">
+        <div class="min-h-[12vh] flex flex-col items-center justify-center text-center">
+          <h1 class="text-2xl md:text-3xl font-semibold mb-1">¿En qué puedo ayudarte?</h1>
+          <p class="text-sub text-sm">Acepto Markdown y adjuntos (imágenes).</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- Área de chat -->
+    <main class="flex-1">
+      <div id="chat" class="max-w-3xl mx-auto px-4 py-6 space-y-4"></div>
+    </main>
+
+    <!-- Composer -->
+    <footer class="sticky bottom-0 bg-black border-t border-line">
+      <div class="max-w-3xl mx-auto px-4 py-3">
+        <form id="composer" class="flex items-end gap-2">
+          <!-- Botón de herramientas (izquierda) -->
+          <button id="toolsBtn" type="button" class="shrink-0 p-3 rounded-2xl border border-line hover:bg-pane" title="Herramientas">
+            <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" stroke="currentColor"><circle cx="12" cy="12" r="9"/><path d="M12 7v10M7 12h10"/></svg>
+          </button>
+
+          <textarea id="userInput" rows="1" placeholder="Escribe aquí..."
+            class="flex-1 resize-none rounded-2xl bg-pane text-text placeholder-sub border border-line focus:outline-none focus:ring-2 focus:ring-white/20 px-4 py-3"></textarea>
+
+          <button id="sendBtn" type="submit"
+            class="shrink-0 inline-flex items-center gap-2 rounded-2xl bg-white text-black font-medium px-4 py-3 hover:bg-white/90 transition">
+            Enviar
+          </button>
+        </form>
+
+        <!-- Chips de adjuntos / estado -->
+        <div id="attachRow" class="mt-2 hidden">
+          <span id="attachChip" class="inline-flex items-center gap-2 text-xs px-2 py-1 rounded-full border border-line bg-pane">
+            <svg xmlns="http://www.w3.org/2000/svg" class="h-3 w-3" fill="none" stroke="currentColor"><path d="M21.44 11.05l-9.19 9.19a6 6 0 1 1-8.49-8.49l9.19-9.19a4 4 0 1 1 5.66 5.66L9.88 16.87a2 2 0 1 1-2.83-2.83l8.13-8.13"/></svg>
+            <span id="attachLabel">1 imagen adjunta</span>
+            <button id="clearAttachBtn" class="ml-1 px-1 rounded hover:bg-black/30">×</button>
+          </span>
+        </div>
+      </div>
+    </footer>
+  </div>
+
+  <!-- Modal herramientas -->
+  <div id="toolsModal" class="fixed inset-0 z-50 hidden">
+    <div id="toolsModalOverlay" class="absolute inset-0 bg-black/60"></div>
+    <div class="absolute inset-0 flex items-center justify-center p-4">
+      <div class="w-full max-w-md rounded-2xl border border-line bg-ink p-4">
+        <div class="flex items-center justify-between mb-3">
+          <h2 class="font-semibold">Herramientas</h2>
+          <button id="closeToolsModal" class="p-2 rounded-lg border border-line hover:bg-pane" aria-label="Cerrar">
+            <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" stroke="currentColor"><path d="M6 6l12 12M18 6L6 18"/></svg>
+          </button>
+        </div>
+
+        <!-- Pensamiento profundo -->
+        <label class="flex items-center gap-3 py-2">
+          <input id="deepToggle" type="checkbox" class="h-4 w-4">
+          <div>
+            <div class="text-sm font-medium">Pensamiento profundo (o3-mini)</div>
+            <div class="text-xs text-sub">Más razonamiento, puede tardar un poco más.</div>
+          </div>
+        </label>
+
+        <!-- Subir imagen -->
+        <div class="mt-3">
+          <button id="uploadImgBtn" class="w-full rounded-lg border border-line bg-pane hover:bg-black/40 px-3 py-2 text-sm">
+            Subir imagen para analizar
+          </button>
+          <input id="fileInput" type="file" accept="image/*" class="hidden" />
+          <div id="uploadNote" class="text-xs text-sub mt-2">La imagen se adjuntará al próximo mensaje.</div>
+        </div>
+      </div>
+    </div>
+  </div>
+  
+  <!-- Modal Personalización -->
+<div id="prefsModal" class="fixed inset-0 z-50 hidden">
+  <div id="prefsOverlay" class="absolute inset-0 bg-black/60"></div>
+  <div class="absolute inset-0 flex items-center justify-center p-4">
+    <div class="w-full max-w-md rounded-2xl border border-line bg-ink p-4">
+      <div class="flex items-center justify-between mb-3">
+        <h2 class="font-semibold">Personalización</h2>
+        <button id="closePrefs" class="p-2 rounded-lg border border-line hover:bg-pane" aria-label="Cerrar">
+          <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" stroke="currentColor"><path d="M6 6l12 12M18 6L6 18"/></svg>
+        </button>
+      </div>
+      <div class="space-y-3">
+        <label class="block">
+          <span class="text-sm text-sub">¿Cómo debo llamarte?</span>
+          <input id="prefCallYou" type="text" class="mt-1 w-full rounded-lg bg-pane border border-line px-3 py-2 text-sm" placeholder="(Opcional) Ej: Alex">
+        </label>
+        <label class="block">
+          <span class="text-sm text-sub">Estilo / Comportamiento</span>
+          <textarea id="prefStyle" rows="4" class="mt-1 w-full rounded-lg bg-pane border border-line px-3 py-2 text-sm" placeholder="(Opcional) Ej: Sé breve y directo; tono relajado; usa bullets."></textarea>
+        </label>
+      </div>
+      <div class="mt-4 flex justify-end gap-2">
+        <button id="savePrefs" class="px-3 py-2 rounded-lg border border-line hover:bg-pane text-sm">Guardar</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+  <!-- JS principal -->
+  <script type="module" src="./app/main.js"></script>
+</body>
+</html>

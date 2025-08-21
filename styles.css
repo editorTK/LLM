@@ -1,0 +1,53 @@
+/* static/styles.css */
+
+/* Indicador "tres puntitos" */
+.typing-dots {
+  display: inline-block;
+  position: relative;
+  width: 54px;
+  height: 14px;
+}
+.typing-dots::before, .typing-dots::after, .typing-dots span {
+  content: '';
+  position: absolute;
+  top: 0;
+  width: 10px;
+  height: 10px;
+  background: #888;
+  border-radius: 50%;
+  animation: bounce 1.4s infinite ease-in-out both;
+}
+.typing-dots::before { left: 0; animation-delay: -0.32s; }
+.typing-dots span      { left: 22px; animation-delay: -0.16s; }
+.typing-dots::after  { left: 44px; }
+
+@keyframes bounce {
+  0%, 80%, 100% { transform: scale(0); opacity: .5; }
+  40% { transform: scale(1.0); opacity: 1; }
+}
+
+
+/* Burbujas mínimas (apoyadas en Tailwind para lo demás) */
+.msg {
+  border: 1px solid #1f1f1f;
+  background: #121212;
+  border-radius: 16px;
+  padding: 12px 14px;
+}
+.msg--user { background: #0f1113; }
+.msg--assistant { background: #121212; }
+
+/* ---- IMPORTANTE: Se eliminó todo lo relativo a "píldoras" y búsquedas ---- */
+
+/* Popover para Abrir/Eliminar en la lista de chats */
+.chat-row-pop {
+  display: flex;
+  gap: 6px;
+}
+.btn-pop {
+  padding: 4px 8px;
+  border-radius: 10px;
+  font-size: 12px;
+  border: 1px solid #1f1f1f;
+}
+
