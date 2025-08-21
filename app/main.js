@@ -1,5 +1,5 @@
 /* main.js — versión simplificada
- * - Sin o3, sin blur
+ * - Sin o3
  * - Solo gpt-5-mini (rápido)
  * - Un solo archivo (sin imports)
  * - KV usando kv.del() para borrar
@@ -83,8 +83,9 @@ function renderMarkdown(md="") {
 // Estado global           //
 //////////////////////////////
 
-const MODEL = "gpt-5"; // ÚNICO modelo ahora
+const MODEL = "gpt-5-mini"; // ÚNICO modelo ahora
 const INPUT_MAX_HEIGHT = 160;
+const TIMEOUT_MS = 20000; // 20s
 
 const state = {
   pendingImage: null,      // { path, name }
@@ -253,36 +254,33 @@ function renderChatList(filter = "") {
   }
   for (const c of items) {
     const row = document.createElement("div");
-    row.className = "group relative";
     row.innerHTML = `
       <button class="w-full text-left px-4 py-3 hover:bg-pane">
         <div class="text-sm font-medium truncate">${escapeHTML(c.name || "Chat sin título")}</div>
         <div class="text-xs text-sub truncate">${escapeHTML(c.lastUser || "")}</div>
-      </button>
-      <div class="chat-row-pop absolute right-2 top-1/2 -translate-y-1/2 hidden">
-        <button class="btn-pop bg-white text-black" data-action="open">Abrir</button>
-        <button class="btn-pop bg-red-600 text-white" data-action="delete">Eliminar</button>
-      </div>
-    `;
-    const openBtn = row.querySelector('[data-action="open"]');
-    const delBtn = row.querySelector('[data-action="delete"]');
-    const pressBtn = row.querySelector("button");
-    pressBtn.addEventListener("click", () => {
-      row.querySelector(".chat-row-pop").classList.toggle("hidden");
-    });
-    openBtn.addEventListener("click", (e) => { e.stopPropagation(); openChat(c.id); });
-    delBtn.addEventListener("click", async (e) => {
-      e.stopPropagation();
-      await deleteChatKV(c.id);
-      state.chatsIndex = state.chatsIndex.filter(x => x.id !== c.id);
-      renderChatList(chatSearchEl.value || "");
-      if (state.currentChatId === c.id) {
-        state.currentChatId = null;
-        chatEl.innerHTML = "";
-        showHero();
-        state.messages = [{ role: "system", content: buildSystemPrompt(state.prefs) }];
-      }
-    });
+      </button>`;
+    const btn = row.querySelector("button");
+    let pressTimer;
+    const startPress = () => {
+      pressTimer = setTimeout(async () => {
+        if (confirm("¿Eliminar este chat?")) {
+          await deleteChatKV(c.id);
+          state.chatsIndex = state.chatsIndex.filter(x => x.id !== c.id);
+          renderChatList(chatSearchEl.value || "");
+          if (state.currentChatId === c.id) {
+            state.currentChatId = null;
+            chatEl.innerHTML = "";
+            showHero();
+            state.messages = [{ role: "system", content: buildSystemPrompt(state.prefs) }];
+          }
+        }
+      }, 600);
+    };
+    const cancelPress = () => clearTimeout(pressTimer);
+    btn.addEventListener("click", () => openChat(c.id));
+    btn.addEventListener("mousedown", startPress);
+    btn.addEventListener("touchstart", startPress);
+    ["mouseup","mouseleave","mouseout","touchend","touchcancel"].forEach(ev => btn.addEventListener(ev, cancelPress));
     chatListEl.appendChild(row);
   }
 }
@@ -353,7 +351,9 @@ Estructura:
 async function aiChatJSON(messages) {
   if (!window.puter?.ai?.chat) throw new Error("Puter.ai.chat no está disponible.");
   // Firma correcta con messages[]: (messages, testMode=false, options)
-  const resp = await puter.ai.chat(messages, false, { model: MODEL, stream: false });
+  const req = puter.ai.chat(messages, false, { model: MODEL, stream: false });
+  const timeout = new Promise((_, rej) => setTimeout(() => rej(new Error("tardó demasiado")), TIMEOUT_MS));
+  const resp = await Promise.race([req, timeout]);
   const raw = normalizeText(resp);
   const parsed = extractJSON(raw);
   return {
@@ -469,6 +469,15 @@ window.addEventListener("DOMContentLoaded", async () => {
   renderChatList("");
 
   showHero();
+
+  // Cierre con Esc
+  window.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") {
+      closeSidebar();
+      toolsModal?.classList.add("hidden");
+      closePrefsModal();
+    }
+  });
 });
 
 // Envío de mensaje
@@ -510,8 +519,16 @@ form?.addEventListener("submit", async (e) => {
   state.pendingImage = null;
   attachRow?.classList.add("hidden");
 
+  const t0 = performance.now();
+  log("IA: inicio consulta");
+  const slowTimer = setTimeout(() => {
+    assistantBubble.innerHTML = '<span class="text-sub text-xs">El modelo está tardando…</span>';
+  }, 10000);
+
   try {
     const { answer, chat_name } = await aiChatJSON(msgs);
+    log("IA: respuesta en", Math.round(performance.now() - t0), "ms");
+    clearTimeout(slowTimer);
     if (mySeq !== state.seq) return;
 
     // Efecto máquina de escribir (simula streaming)
@@ -529,6 +546,7 @@ form?.addEventListener("submit", async (e) => {
     renderChatList(chatSearchEl.value || "");
 
   } catch (err) {
+    clearTimeout(slowTimer);
     const info = classifyError(err);
     setAssistantError(
       assistantBubble,
