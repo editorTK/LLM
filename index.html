@@ -54,7 +54,7 @@
     <div class="px-4 py-3 border-b border-line">
       <div class="flex items-center gap-2">
         <div class="font-semibold flex-1">Tus chats</div>
-        <button id="prefsBtn" class="px-2 py-1 text-xs border border-line rounded-lg hover:bg-pane">Personalización</button>
+        <button id="prefsBtn" class="px-2 py-1 text-xs rounded-lg bg-white text-black font-medium hover:bg-white/90">Personalización</button>
         <button id="newChatBtn" class="px-2 py-1 text-xs border border-line rounded-lg hover:bg-pane">Nuevo</button>
         <button id="closeSidebarBtn" class="p-2 rounded-lg border border-line hover:bg-pane" aria-label="Cerrar">
           <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" stroke="currentColor"><path d="M6 6l12 12M18 6L6 18"/></svg>
@@ -67,7 +67,7 @@
     <div id="chatList" class="flex-1 overflow-y-auto divide-y divide-line"></div>
   </div>
 </aside>
-<div id="sidebarOverlay" class="fixed inset-0 bg-black/40 z-30 hidden"></div>
+<div id="sidebarOverlay" class="fixed inset-0 bg-black/40 backdrop-blur-sm z-30 hidden"></div>
     <!-- Hero -->
     <section id="hero" class="flex-1">
       <div class="max-w-3xl mx-auto px-4 py-10">
@@ -115,7 +115,7 @@
 
   <!-- Modal herramientas -->
   <div id="toolsModal" class="fixed inset-0 z-50 hidden">
-    <div id="toolsModalOverlay" class="absolute inset-0 bg-black/60"></div>
+  <div id="toolsModalOverlay" class="absolute inset-0 bg-black/60 backdrop-blur-sm"></div>
     <div class="absolute inset-0 flex items-center justify-center p-4">
       <div class="w-full max-w-md rounded-2xl border border-line bg-ink p-4">
         <div class="flex items-center justify-between mb-3">
@@ -148,7 +148,7 @@
   
   <!-- Modal Personalización -->
 <div id="prefsModal" class="fixed inset-0 z-50 hidden">
-  <div id="prefsOverlay" class="absolute inset-0 bg-black/60"></div>
+  <div id="prefsOverlay" class="absolute inset-0 bg-black/60 backdrop-blur-sm"></div>
   <div class="absolute inset-0 flex items-center justify-center p-4">
     <div class="w-full max-w-md rounded-2xl border border-line bg-ink p-4">
       <div class="flex items-center justify-between mb-3">
