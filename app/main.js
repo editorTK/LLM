@@ -58,7 +58,15 @@ const uploadImgBtn = $("#uploadImgBtn");
 const fileInput = $("#fileInput");
 const attachRow = $("#attachRow");
 const attachLabel = $("#attachLabel");
+const attachThumb = $("#attachThumb");
 const clearAttachBtn = $("#clearAttachBtn");
+
+// Modal eliminar chat
+const deleteModal = $("#deleteModal");
+const deleteOverlay = $("#deleteOverlay");
+const deleteText = $("#deleteText");
+const cancelDeleteBtn = $("#cancelDeleteBtn");
+const confirmDeleteBtn = $("#confirmDeleteBtn");
 
 //////////////////////////////
 // Markdown seguro         //
@@ -88,12 +96,13 @@ const INPUT_MAX_HEIGHT = 160;
 const TIMEOUT_MS = 20000; // 20s
 
 const state = {
-  pendingImage: null,      // { path, name }
+  pendingImage: null,      // { path, name, preview }
   currentChatId: null,
   chatsIndex: [],          // [{ id, name, lastUser, updatedAt }]
   seq: 0,                  // invalida respuestas viejas
   prefs: { call_you: "", style: "" },
-  messages: []             // arr de {role, content}, primer elemento siempre "system"
+  messages: [],            // arr de {role, content}, primer elemento siempre "system"
+  chatToDelete: null       // chat seleccionado para eliminar
 };
 
 //////////////////////////////
@@ -103,12 +112,27 @@ const state = {
 function hideHero(){ hero?.classList.add("hidden"); }
 function showHero(){ hero?.classList.remove("hidden"); }
 
-function addUserBubble(text) {
+function addUserBubble(text, imageUrl=null, imageName="") {
   const wrap = document.createElement("div");
   wrap.className = "flex justify-end";
   const bubble = document.createElement("div");
   bubble.className = "msg msg--user max-w-[85%] md:max-w-[75%] text-sm prose prose-invert prose-pre:whitespace-pre-wrap";
-  bubble.innerHTML = renderMarkdown(text);
+  if (imageUrl) {
+    const img = document.createElement("img");
+    img.src = imageUrl;
+    img.alt = imageName || "imagen";
+    img.className = "mb-2 rounded max-h-60 object-contain";
+    img.addEventListener("error", () => {
+      const fb = document.createElement("div");
+      fb.className = "mb-2 text-xs text-sub";
+      fb.textContent = imageName || "imagen";
+      img.replaceWith(fb);
+    });
+    bubble.appendChild(img);
+  }
+  const textDiv = document.createElement("div");
+  textDiv.innerHTML = renderMarkdown(text);
+  bubble.appendChild(textDiv);
   wrap.appendChild(bubble);
   chatEl.appendChild(wrap);
   scrollToBottom(); hideHero();
@@ -229,6 +253,16 @@ function closePrefsModal() {
   prefsModal.classList.add("hidden");
 }
 
+function openDeleteModal(chat) {
+  state.chatToDelete = chat;
+  deleteText.textContent = `¿Seguro que deseas eliminar '${chat.name || "Chat sin título"}'?`;
+  deleteModal.classList.remove("hidden");
+}
+function closeDeleteModal() {
+  deleteModal.classList.add("hidden");
+  state.chatToDelete = null;
+}
+
 //////////////////////////////
 // Sidebar & lista chats    //
 //////////////////////////////
@@ -261,23 +295,12 @@ function renderChatList(filter = "") {
       </button>`;
     const btn = row.querySelector("button");
     let pressTimer;
+    let longPressed = false;
     const startPress = () => {
-      pressTimer = setTimeout(async () => {
-        if (confirm("¿Eliminar este chat?")) {
-          await deleteChatKV(c.id);
-          state.chatsIndex = state.chatsIndex.filter(x => x.id !== c.id);
-          renderChatList(chatSearchEl.value || "");
-          if (state.currentChatId === c.id) {
-            state.currentChatId = null;
-            chatEl.innerHTML = "";
-            showHero();
-            state.messages = [{ role: "system", content: buildSystemPrompt(state.prefs) }];
-          }
-        }
-      }, 600);
+      pressTimer = setTimeout(() => { longPressed = true; openDeleteModal(c); }, 600);
     };
     const cancelPress = () => clearTimeout(pressTimer);
-    btn.addEventListener("click", () => openChat(c.id));
+    btn.addEventListener("click", () => { if (!longPressed) openChat(c.id); longPressed = false; });
     btn.addEventListener("mousedown", startPress);
     btn.addEventListener("touchstart", startPress);
     ["mouseup","mouseleave","mouseout","touchend","touchcancel"].forEach(ev => btn.addEventListener(ev, cancelPress));
@@ -290,6 +313,8 @@ function newChat() {
   state.messages = [{ role: "system", content: buildSystemPrompt(state.prefs) }];
   chatEl.innerHTML = "";
   showHero();
+  closeSidebar();
+  input.focus();
 }
 
 async function openChat(id) {
@@ -436,20 +461,46 @@ window.addEventListener("DOMContentLoaded", async () => {
   fileInput?.addEventListener("change", async (e) => {
     const files = e.target.files;
     if (!files?.length) return;
+    const file = files[0];
+    const previewUrl = URL.createObjectURL(file);
     try {
       const uploaded = await puter.fs.upload(files);
       const f = Array.isArray(uploaded) ? uploaded[0] : uploaded;
-      state.pendingImage = { path: f.path, name: f.name || "imagen" };
-      attachLabel.textContent = `Adjunto: ${state.pendingImage.name}`;
+      state.pendingImage = { path: f.path, name: f.name || "imagen", preview: previewUrl };
+      attachThumb.src = previewUrl;
+      attachLabel.textContent = f.name || "imagen";
       attachRow.classList.remove("hidden");
     } catch (err) {
+      URL.revokeObjectURL(previewUrl);
       alert("No se pudo subir la imagen.");
       console.error(err);
     } finally {
       fileInput.value = "";
     }
   });
-  clearAttachBtn?.addEventListener("click", () => { state.pendingImage = null; attachRow.classList.add("hidden"); });
+  clearAttachBtn?.addEventListener("click", () => {
+    if (state.pendingImage?.preview) URL.revokeObjectURL(state.pendingImage.preview);
+    state.pendingImage = null;
+    attachRow.classList.add("hidden");
+  });
+
+  // Modal eliminar chat
+  deleteOverlay?.addEventListener("click", closeDeleteModal);
+  cancelDeleteBtn?.addEventListener("click", closeDeleteModal);
+  confirmDeleteBtn?.addEventListener("click", async () => {
+    const c = state.chatToDelete;
+    if (!c) return closeDeleteModal();
+    await deleteChatKV(c.id);
+    state.chatsIndex = state.chatsIndex.filter(x => x.id !== c.id);
+    renderChatList(chatSearchEl.value || "");
+    if (state.currentChatId === c.id) {
+      state.currentChatId = null;
+      chatEl.innerHTML = "";
+      showHero();
+      state.messages = [{ role: "system", content: buildSystemPrompt(state.prefs) }];
+    }
+    closeDeleteModal();
+  });
 
   // Autoresize input + Enter para enviar
   input?.addEventListener("input", autoresizeTextarea);
@@ -476,6 +527,7 @@ window.addEventListener("DOMContentLoaded", async () => {
       closeSidebar();
       toolsModal?.classList.add("hidden");
       closePrefsModal();
+      closeDeleteModal();
     }
   });
 });
@@ -488,7 +540,8 @@ form?.addEventListener("submit", async (e) => {
 
   if (!state.currentChatId) newChat();
 
-  addUserBubble(text);
+  const img = state.pendingImage;
+  addUserBubble(text, img?.preview || null, img?.name);
   const assistantBubble = addAssistantSkeleton();
 
   input.value = "";
@@ -496,9 +549,9 @@ form?.addEventListener("submit", async (e) => {
   hideHero();
 
   // Mensaje del usuario a historial (texto o multimodal)
-  if (state.pendingImage) {
+  if (img) {
     state.messages.push({ role: "user", content: [
-      { type: "file", puter_path: state.pendingImage.path },
+      { type: "file", puter_path: img.path },
       { type: "text", text }
     ]});
   } else {
@@ -512,12 +565,13 @@ form?.addEventListener("submit", async (e) => {
   const msgs = wrapForJSON({
     baseMessages: state.messages,
     userText: text,
-    pendingImage: state.pendingImage
+    pendingImage: img
   });
 
   // Consumimos el adjunto una sola vez
   state.pendingImage = null;
   attachRow?.classList.add("hidden");
+  if (img?.preview) URL.revokeObjectURL(img.preview);
 
   const t0 = performance.now();
   log("IA: inicio consulta");
