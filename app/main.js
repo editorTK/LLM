@@ -1,6 +1,6 @@
 /* main.js — versión simplificada
  * - Sin o3
- * - Solo gpt-5-mini (rápido)
+ * - Solo gpt-4-mini (rápido)
  * - Un solo archivo (sin imports)
  * - KV usando kv.del() para borrar
  * - Streaming en turnos posteriores y typewriter de respaldo
