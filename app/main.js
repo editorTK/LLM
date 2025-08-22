@@ -3,9 +3,9 @@
  * - Solo gpt-5-mini (rápido)
  * - Un solo archivo (sin imports)
  * - KV usando kv.del() para borrar
- * - Llamada a puter.ai.chat SIN streaming + typewriter para simularlo
+ * - Streaming en turnos posteriores y typewriter de respaldo
  * - Manejo de errores robusto y logs de humo
- */
+*/
 
 //////////////////////////////
 // Utilidades básicas      //
@@ -172,7 +172,8 @@ function autoresizeTextarea() {
   input.style.overflowY = (input.scrollHeight > INPUT_MAX_HEIGHT) ? "auto" : "hidden";
 }
 
-async function typewriterMarkdown(node, fullMD, cps = 40, step = 3) {
+async function renderAssistantTypewriter(node, fullMD, cps = 40, step = 3) {
+  const t0 = performance.now();
   let i = 0;
   const delay = Math.max(5, Math.round(1000 / cps));
   while (i < fullMD.length) {
@@ -181,6 +182,7 @@ async function typewriterMarkdown(node, fullMD, cps = 40, step = 3) {
     await new Promise(r => setTimeout(r, delay));
   }
   setAssistantMarkdown(node, fullMD);
+  return { text: fullMD, typeMs: performance.now() - t0 };
 }
 
 //////////////////////////////
@@ -347,44 +349,79 @@ async function openChat(id) {
 // Llamada a la IA          //
 //////////////////////////////
 
-function wrapForJSON({ baseMessages, userText, pendingImage }) {
-  const instruction =
-`Responde ÚNICAMENTE con JSON válido, sin texto adicional.
-Estructura:
-{
-  "answer": "texto en Markdown con la respuesta al usuario",
-  "chat_name": "título breve (máx 60 caracteres) basado en su pregunta"
-}`;
-  // Asegurar que el primer mensaje sea el system con prefs actuales
-  if (!baseMessages.length || baseMessages[0]?.role !== "system") {
-    baseMessages = [{ role: "system", content: buildSystemPrompt(state.prefs) }, ...baseMessages];
-  } else {
-    baseMessages[0] = { role: "system", content: buildSystemPrompt(state.prefs) };
+function shouldUseStreaming(state) {
+  const hasAssistant = state.messages.some(m => m.role === "assistant");
+  if (hasAssistant) return true;
+  if (state.currentChatId && state.chatsIndex.some(c => c.id === state.currentChatId)) return true;
+  return false;
+}
+
+function pruneMessagesForBudget(messages, maxChars = 8000) {
+  if (!Array.isArray(messages) || !messages.length) return [];
+  const head = messages[0];
+  const rest = messages.slice(1);
+  let total = JSON.stringify(head).length;
+  const kept = [];
+  for (let i = rest.length - 1; i >= 0; i--) {
+    const m = rest[i];
+    const len = JSON.stringify(m).length;
+    if (total + len > maxChars) break;
+    total += len;
+    kept.unshift(m);
   }
+  return [head, ...kept];
+}
+
+function buildMessagesForFirstTurn(baseMessages, userText, pendingImage) {
+  const instruction = `Responde ÚNICAMENTE con JSON válido, sin texto adicional.\nEstructura:\n{\n  "answer": "texto en Markdown con la respuesta al usuario",\n  "chat_name": "título breve (máx 60 caracteres) basado en su pregunta"\n}`;
   return [
     ...baseMessages,
     { role: "system", content: instruction },
-    {
-      role: "user",
-      content: pendingImage
-        ? [{ type: "file", puter_path: pendingImage.path }, { type: "text", text: userText }]
-        : userText
-    }
+    { role: "user", content: pendingImage ? [{ type: "file", puter_path: pendingImage.path }, { type: "text", text: userText }] : userText }
   ];
 }
 
-async function aiChatJSON(messages) {
+function buildMessagesForNextTurns(baseMessages, userText, pendingImage) {
+  const instruction = "Responde en Markdown. Sé claro y conciso.";
+  return [
+    ...baseMessages,
+    { role: "system", content: instruction },
+    { role: "user", content: pendingImage ? [{ type: "file", puter_path: pendingImage.path }, { type: "text", text: userText }] : userText }
+  ];
+}
+
+async function callAI(messages, { stream }) {
   if (!window.puter?.ai?.chat) throw new Error("Puter.ai.chat no está disponible.");
-  // Firma correcta con messages[]: (messages, testMode=false, options)
-  const req = puter.ai.chat(messages, false, { model: MODEL, stream: false });
+  const req = puter.ai.chat(messages, false, { model: MODEL, stream });
   const timeout = new Promise((_, rej) => setTimeout(() => rej(new Error("tardó demasiado")), TIMEOUT_MS));
   const resp = await Promise.race([req, timeout]);
-  const raw = normalizeText(resp);
-  const parsed = extractJSON(raw);
-  return {
-    answer: parsed?.answer ?? raw ?? "",
-    chat_name: (parsed?.chat_name ?? "").trim()
-  };
+  if (stream) return { streamIterator: resp };
+  return { text: normalizeText(resp) };
+}
+
+async function renderAssistantStreaming(node, iterator) {
+  const t0 = performance.now();
+  let full = "";
+  for await (const part of iterator) {
+    if (part?.text) {
+      full += part.text;
+      setAssistantMarkdown(node, full);
+    }
+  }
+  return { text: full, typeMs: performance.now() - t0 };
+}
+
+function appendTimingTag(node, { model, genMs, typeMs, uploadMs }) {
+  const tag = document.createElement("div");
+  tag.className = "mt-1 text-[10px] text-sub";
+  const parts = [
+    `model:${model}`,
+    `ia:${Math.round(genMs)}ms`,
+    `render:${Math.round(typeMs)}ms`
+  ];
+  if (uploadMs != null) parts.push(`upload:${Math.round(uploadMs)}ms`);
+  tag.textContent = parts.join(" · ");
+  node.appendChild(tag);
 }
 
 function normalizeText(resp) {
@@ -464,9 +501,11 @@ window.addEventListener("DOMContentLoaded", async () => {
     const file = files[0];
     const previewUrl = URL.createObjectURL(file);
     try {
+      const up0 = performance.now();
       const uploaded = await puter.fs.upload(files);
+      const uploadMs = performance.now() - up0;
       const f = Array.isArray(uploaded) ? uploaded[0] : uploaded;
-      state.pendingImage = { path: f.path, name: f.name || "imagen", preview: previewUrl };
+      state.pendingImage = { path: f.path, name: f.name || "imagen", preview: previewUrl, uploadMs };
       attachThumb.src = previewUrl;
       attachLabel.textContent = f.name || "imagen";
       attachRow.classList.remove("hidden");
@@ -544,60 +583,92 @@ form?.addEventListener("submit", async (e) => {
   addUserBubble(text, img?.preview || null, img?.name);
   const assistantBubble = addAssistantSkeleton();
 
-  input.value = "";
-  input.style.height = "auto";
-  hideHero();
+  input.value = ""; input.style.height = "auto"; hideHero();
 
-  // Mensaje del usuario a historial (texto o multimodal)
-  if (img) {
-    state.messages.push({ role: "user", content: [
-      { type: "file", puter_path: img.path },
-      { type: "text", text }
-    ]});
-  } else {
-    state.messages.push({ role: "user", content: text });
-  }
+  const base = pruneMessagesForBudget(state.messages);
+  const useStream = shouldUseStreaming(state);
+  const msgs = useStream
+    ? buildMessagesForNextTurns(base, text, img)
+    : buildMessagesForFirstTurn(base, text, img);
 
-  // invalidar respuestas anteriores si el usuario envía rápido
-  const mySeq = ++state.seq;
+  // almacenar mensaje de usuario para historial
+  const userMsg = img
+    ? { role: "user", content: [{ type: "file", puter_path: img.path }, { type: "text", text }] }
+    : { role: "user", content: text };
+  state.messages.push(userMsg);
 
-  // Construimos mensajes para pedir JSON en UNA llamada
-  const msgs = wrapForJSON({
-    baseMessages: state.messages,
-    userText: text,
-    pendingImage: img
-  });
+  const uploadMs = img?.uploadMs ?? null;
 
-  // Consumimos el adjunto una sola vez
+  // Consumir adjunto
   state.pendingImage = null;
   attachRow?.classList.add("hidden");
   if (img?.preview) URL.revokeObjectURL(img.preview);
 
+  const mySeq = ++state.seq;
   const t0 = performance.now();
   log("IA: inicio consulta");
   const slowTimer = setTimeout(() => {
     assistantBubble.innerHTML = '<span class="text-sub text-xs">El modelo está tardando…</span>';
   }, 10000);
 
+  let answer = "";
+  let chatName = "";
+  let genMs = 0;
+  let typeMs = 0;
+
   try {
-    const { answer, chat_name } = await aiChatJSON(msgs);
-    log("IA: respuesta en", Math.round(performance.now() - t0), "ms");
+    if (useStream) {
+      try {
+        const { streamIterator } = await callAI(msgs, { stream: true });
+        let gotFirst = false;
+        const wrapped = (async function* () {
+          for await (const part of streamIterator) {
+            if (!gotFirst && part?.text) { gotFirst = true; genMs = performance.now() - t0; }
+            yield part;
+          }
+        })();
+        const r = await renderAssistantStreaming(assistantBubble, wrapped);
+        answer = r.text; typeMs = r.typeMs;
+        if (!gotFirst) genMs = performance.now() - t0;
+      } catch (streamErr) {
+        console.warn("stream falló, reintentando sin streaming", streamErr);
+        const t1 = performance.now();
+        const { text: raw } = await callAI(msgs, { stream: false });
+        genMs = performance.now() - t1;
+        const r = await renderAssistantTypewriter(assistantBubble, raw, 40, 3);
+        answer = r.text; typeMs = r.typeMs;
+      }
+    } else {
+      const { text: raw } = await callAI(msgs, { stream: false });
+      genMs = performance.now() - t0;
+      const parsed = extractJSON(raw);
+      answer = parsed?.answer ?? raw ?? "";
+      chatName = (parsed?.chat_name ?? "").trim();
+      const r = await renderAssistantTypewriter(assistantBubble, answer, 40, 3);
+      typeMs = r.typeMs;
+    }
+
     clearTimeout(slowTimer);
     if (mySeq !== state.seq) return;
 
-    // Efecto máquina de escribir (simula streaming)
-    await typewriterMarkdown(assistantBubble, answer, 40, 3);
-
-    // Guardar historial + snapshot (aparece en la lista)
     state.messages.push({ role: "assistant", content: answer });
     await saveConversation(state.currentChatId, state.messages);
 
-    const title = (chat_name || smartNameFrom(text)).slice(0, 60);
+    let title;
+    if (!useStream) {
+      title = (chatName || smartNameFrom(text)).slice(0, 60);
+    } else {
+      const metaCurr = state.chatsIndex.find(x => x.id === state.currentChatId);
+      title = metaCurr?.name || smartNameFrom(text);
+    }
     const meta = await saveChatMeta({ id: state.currentChatId, name: title, lastUser: text });
     const idx = state.chatsIndex.findIndex(x=>x.id===meta.id);
     if (idx >= 0) state.chatsIndex[idx] = meta; else state.chatsIndex.unshift(meta);
     state.chatsIndex.sort((a,b)=> (b.updatedAt||0) - (a.updatedAt||0));
     renderChatList(chatSearchEl.value || "");
+
+    appendTimingTag(assistantBubble, { model: MODEL, genMs, typeMs, uploadMs });
+    log({ model: MODEL, genMs, typeMs, uploadMs });
 
   } catch (err) {
     clearTimeout(slowTimer);
