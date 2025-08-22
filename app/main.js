@@ -91,7 +91,7 @@ function renderMarkdown(md="") {
 // Estado global           //
 //////////////////////////////
 
-const MODEL = "gpt-5-mini"; // ÚNICO modelo ahora
+const MODEL = "gpt-4o-mini"; // ÚNICO modelo ahora
 const INPUT_MAX_HEIGHT = 160;
 const TIMEOUT_MS = 20000; // 20s
 
