@@ -101,13 +101,13 @@
           </button>
         </form>
 
-        <!-- Chips de adjuntos / estado -->
+        <!-- Previsualización de adjunto -->
         <div id="attachRow" class="mt-2 hidden">
-          <span id="attachChip" class="inline-flex items-center gap-2 text-xs px-2 py-1 rounded-full border border-line bg-pane">
-            <svg xmlns="http://www.w3.org/2000/svg" class="h-3 w-3" fill="none" stroke="currentColor"><path d="M21.44 11.05l-9.19 9.19a6 6 0 1 1-8.49-8.49l9.19-9.19a4 4 0 1 1 5.66 5.66L9.88 16.87a2 2 0 1 1-2.83-2.83l8.13-8.13"/></svg>
-            <span id="attachLabel">1 imagen adjunta</span>
-            <button id="clearAttachBtn" class="ml-1 px-1 rounded hover:bg-black/30">×</button>
-          </span>
+          <div class="inline-flex items-center gap-2 text-xs px-2 py-1 rounded-lg border border-line bg-pane">
+            <img id="attachThumb" class="h-10 w-10 object-cover rounded" alt="previsualización" />
+            <span id="attachLabel" class="truncate max-w-[8rem]"></span>
+            <button id="clearAttachBtn" class="ml-auto px-1 rounded hover:bg-black/30">Quitar</button>
+          </div>
         </div>
       </div>
     </footer>
@@ -173,6 +173,21 @@
     </div>
   </div>
 </div>
+
+  <!-- Modal eliminar chat -->
+  <div id="deleteModal" class="fixed inset-0 z-50 hidden">
+    <div id="deleteOverlay" class="absolute inset-0 bg-black/60 backdrop-blur-sm"></div>
+    <div class="absolute inset-0 flex items-center justify-center p-4">
+      <div class="w-full max-w-sm rounded-2xl border border-line bg-ink p-4">
+        <h2 class="font-semibold mb-2">Eliminar chat</h2>
+        <p id="deleteText" class="text-sm mb-4"></p>
+        <div class="flex justify-end gap-2 text-sm">
+          <button id="cancelDeleteBtn" class="px-3 py-2 rounded-lg border border-line hover:bg-pane">Cancelar</button>
+          <button id="confirmDeleteBtn" class="px-3 py-2 rounded-lg bg-red-600 text-white hover:bg-red-500">Eliminar</button>
+        </div>
+      </div>
+    </div>
+  </div>
 
   <!-- JS principal -->
   <script type="module" src="./app/main.js"></script>
