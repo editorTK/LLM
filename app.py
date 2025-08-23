@@ -1,6 +1,6 @@
 import os, json
 from typing import Iterable, Dict, Any
-from flask import Flask, request, jsonify, Response, stream_with_context
+from flask import Flask, request, jsonify, Response, stream_with_context, render_template
 from flask_cors import CORS
 from openai import OpenAI
 
@@ -24,6 +24,11 @@ app = Flask(__name__)
 CORS(app, supports_credentials=True)
 
 OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-5-nano")
+
+@app.get("/")
+def index():
+    return render_template("index.html")
+
 
 
 def _clean_messages(messages: Any) -> list[Dict[str, str]]:
