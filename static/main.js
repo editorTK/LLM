@@ -67,6 +67,16 @@ const deleteText = $("#deleteText");
 const cancelDeleteBtn = $("#cancelDeleteBtn");
 const confirmDeleteBtn = $("#confirmDeleteBtn");
 
+// Billing / Planes
+const plansModal = $("#plansModal");
+const plansOverlay = $("#plansOverlay");
+const closePlans = $("#closePlans");
+const openProCTA = $("#openProCTA");
+const upgradeBanner = $("#upgradeBanner");
+const accountBadge = $("#accountBadge");
+const limitToast = $("#limitToast");
+const usageHint = $("#usageHint");
+
 //////////////////////////////
 // Markdown seguro         //
 //////////////////////////////
@@ -104,6 +114,92 @@ const state = {
   prefs: { call_you: "", style: "" },
   messages: [],            // arr de {role, content}, primer elemento siempre "system"
   chatToDelete: null       // chat seleccionado para eliminar
+};
+
+//////////////////////////////
+// Entitlements (mock)     //
+//////////////////////////////
+
+const ENT_KEY = "app:entitlements";
+const defaultEntitlements = { plan: "starter", daily_msg_limit: 20, used_today: 0 };
+let mockEntitlements = loadEntitlements();
+
+function loadEntitlements() {
+  try {
+    const raw = localStorage.getItem(ENT_KEY);
+    return raw ? { ...defaultEntitlements, ...JSON.parse(raw) } : { ...defaultEntitlements };
+  } catch { return { ...defaultEntitlements }; }
+}
+
+function saveEntitlements() {
+  try { localStorage.setItem(ENT_KEY, JSON.stringify(mockEntitlements)); } catch {}
+}
+
+function updatePlanBadge() {
+  if (!accountBadge) return;
+  accountBadge.textContent = `Plan actual: ${mockEntitlements.plan === "pro" ? "Pro" : "Starter"}`;
+  if (mockEntitlements.plan === "pro") {
+    accountBadge.classList.add("bg-white", "text-black");
+  } else {
+    accountBadge.classList.remove("bg-white", "text-black");
+  }
+}
+
+function updateUpgradeBanner() {
+  if (!upgradeBanner) return;
+  if (mockEntitlements.plan === "starter") upgradeBanner.classList.remove("hidden");
+  else upgradeBanner.classList.add("hidden");
+}
+
+function updateUsage() {
+  if (usageHint) usageHint.textContent = `${mockEntitlements.used_today}/${mockEntitlements.daily_msg_limit} mensajes hoy`;
+  if (!limitToast) return;
+  if (mockEntitlements.plan === "starter" && mockEntitlements.used_today >= mockEntitlements.daily_msg_limit) {
+    limitToast.classList.remove("hidden");
+  } else {
+    limitToast.classList.add("hidden");
+  }
+}
+
+function updateProLocks() {
+  document.querySelectorAll('[data-pro]').forEach(el => {
+    const lock = el.querySelector('.lock-icon');
+    if (mockEntitlements.plan === 'pro') {
+      el.classList.remove('pro-locked');
+      el.removeAttribute('data-tooltip');
+      lock?.classList.add('hidden');
+    } else {
+      el.classList.add('pro-locked');
+      el.setAttribute('data-tooltip','Disponible en Pro');
+      lock?.classList.remove('hidden');
+    }
+  });
+}
+
+function renderBillingUI() {
+  updatePlanBadge();
+  updateUpgradeBanner();
+  updateUsage();
+  updateProLocks();
+}
+
+function openPlansModal() {
+  plansModal?.classList.remove('hidden');
+  setTimeout(() => plansModal?.querySelector('button, [href], input, textarea, [tabindex]')?.focus(), 0);
+}
+function closePlansModal() { plansModal?.classList.add('hidden'); }
+
+// Helpers para pruebas en consola
+window.__setPlan = (p) => {
+  if (p !== 'starter' && p !== 'pro') return;
+  mockEntitlements.plan = p;
+  saveEntitlements();
+  renderBillingUI();
+};
+window.__setUsed = (n) => {
+  mockEntitlements.used_today = Math.max(0, Number(n) || 0);
+  saveEntitlements();
+  renderBillingUI();
 };
 
 //////////////////////////////
@@ -491,6 +587,24 @@ window.addEventListener("DOMContentLoaded", async () => {
   chatSearchEl?.addEventListener("input", (e)=> renderChatList(e.target.value));
   newChatBtn?.addEventListener("click", newChat);
 
+  // Planes / Suscripciones
+  openProCTA?.addEventListener("click", () => console.info("TODO: integrar Stripe"));
+  plansOverlay?.addEventListener("click", closePlansModal);
+  closePlans?.addEventListener("click", closePlansModal);
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && !plansModal.classList.contains("hidden")) closePlansModal();
+  });
+  document.querySelectorAll('[data-action="upgrade"]').forEach(btn => btn.addEventListener('click', openPlansModal));
+  limitToast?.querySelector('[data-action="dismiss"]')?.addEventListener('click', () => limitToast.classList.add('hidden'));
+  document.querySelectorAll('[data-pro]').forEach(el => {
+    el.addEventListener('click', (ev) => {
+      if (mockEntitlements.plan !== 'pro') { ev.preventDefault(); openPlansModal(); }
+    });
+  });
+
+  renderBillingUI();
+  console.log(`[billing-ui] plan: ${mockEntitlements.plan} | used_today: ${mockEntitlements.used_today}/${mockEntitlements.daily_msg_limit} | modales: ok | banners: ok | toasts: ok`);
+
   // Adjuntos
   uploadImgBtn?.addEventListener("click", () => fileInput.click());
   fileInput?.addEventListener("change", async (e) => {
@@ -576,6 +690,10 @@ form?.addEventListener("submit", async (e) => {
   if (!text) return;
 
   if (!state.currentChatId) newChat();
+
+  mockEntitlements.used_today++;
+  saveEntitlements();
+  renderBillingUI();
 
   const img = state.pendingImage;
   addUserBubble(text, img?.preview || null, img?.name);

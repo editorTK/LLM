@@ -49,6 +49,11 @@
       </div>
     </header>
 
+    <!-- Upgrade banner -->
+    <div id="upgradeBanner" class="hidden bg-ink border-b border-line px-4 py-2 flex justify-center">
+      <button data-action="upgrade" class="btn-primary text-xs">Mejorar a Pro</button>
+    </div>
+
     <!-- Lateral (drawer) -->
 <aside id="sidebar" class="fixed inset-y-0 left-0 w-80 max-w-[85%] bg-black border-r border-line z-40 translate-x-[-100%] transition-transform">
   <div class="h-full flex flex-col">
@@ -61,6 +66,7 @@
           <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" stroke="currentColor"><path d="M6 6l12 12M18 6L6 18"/></svg>
         </button>
       </div>
+      <div id="accountBadge" class="mt-2 inline-block px-2 py-1 text-xs rounded-full border border-line">Plan actual: Starter</div>
       <div class="mt-3">
         <input id="chatSearch" type="text" placeholder="Buscar chats…" class="w-full rounded-lg bg-pane border border-line px-3 py-2 text-sm placeholder-sub">
       </div>
@@ -84,6 +90,14 @@
       <div id="chat" class="max-w-3xl mx-auto px-4 py-6 space-y-4"></div>
     </main>
 
+    <div id="limitToast" class="toast hidden text-sm">
+      <p class="mb-2 text-center">Alcanzaste tu límite diario en Starter. Mejora a Pro para seguir usando el asistente.</p>
+      <div class="flex justify-center gap-2 text-xs">
+        <button data-action="upgrade" class="btn-primary">Mejorar a Pro</button>
+        <button data-action="dismiss" class="btn-ghost">Entendido</button>
+      </div>
+    </div>
+
     <!-- Composer -->
     <footer class="sticky bottom-0 bg-black border-t border-line">
       <div class="max-w-3xl mx-auto px-4 py-3">
@@ -101,6 +115,8 @@
             Enviar
           </button>
         </form>
+
+        <div id="usageHint" class="mt-2 text-right text-xs text-sub">0/20 mensajes hoy</div>
 
         <!-- Previsualización de adjunto -->
         <div id="attachRow" class="mt-2 hidden">
@@ -127,16 +143,26 @@
         </div>
 
         <!-- Subir imagen -->
-        <div class="mt-3">
-          <button id="uploadImgBtn" class="w-full rounded-lg border border-line bg-pane hover:bg-black/40 px-3 py-2 text-sm">
-            Subir imagen para analizar
-          </button>
-          <input id="fileInput" type="file" accept="image/*" class="hidden" />
-          <div id="uploadNote" class="text-xs text-sub mt-2">La imagen se adjuntará al próximo mensaje.</div>
+          <div class="mt-3">
+            <button id="uploadImgBtn" class="w-full rounded-lg border border-line bg-pane hover:bg-black/40 px-3 py-2 text-sm">
+              Subir imagen para analizar
+            </button>
+            <input id="fileInput" type="file" accept="image/*" class="hidden" />
+            <div id="uploadNote" class="text-xs text-sub mt-2">La imagen se adjuntará al próximo mensaje.</div>
+          </div>
+          <div class="mt-3 space-y-2">
+            <button data-pro class="w-full rounded-lg border border-line bg-pane px-3 py-2 text-sm flex items-center gap-2 pro-locked" data-tooltip="Disponible en Pro">
+              <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 lock-icon" fill="none" stroke="currentColor"><path d="M4 9V7a4 4 0 118 0v2M4 9h8v5H4z"/></svg>
+              <span>Memoria avanzada</span>
+            </button>
+            <button data-pro class="w-full rounded-lg border border-line bg-pane px-3 py-2 text-sm flex items-center gap-2 pro-locked" data-tooltip="Disponible en Pro">
+              <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 lock-icon" fill="none" stroke="currentColor"><path d="M4 9V7a4 4 0 118 0v2M4 9h8v5H4z"/></svg>
+              <span>Acciones rápidas</span>
+            </button>
+          </div>
         </div>
       </div>
     </div>
-  </div>
   
   <!-- Modal Personalización -->
 <div id="prefsModal" class="fixed inset-0 z-50 hidden">
@@ -176,6 +202,45 @@
         <div class="flex justify-end gap-2 text-sm">
           <button id="cancelDeleteBtn" class="px-3 py-2 rounded-lg border border-line hover:bg-pane">Cancelar</button>
           <button id="confirmDeleteBtn" class="px-3 py-2 rounded-lg bg-red-600 text-white hover:bg-red-500">Eliminar</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal Planes -->
+  <div id="plansModal" class="fixed inset-0 z-50 hidden">
+    <div id="plansOverlay" class="absolute inset-0 bg-black/60 backdrop-blur-sm"></div>
+    <div class="absolute inset-0 flex items-center justify-center p-4">
+      <div class="w-full max-w-3xl rounded-2xl border border-line bg-ink p-6">
+        <div class="flex items-start justify-between mb-6">
+          <h2 class="text-xl font-semibold">Planes y precios</h2>
+          <button id="closePlans" class="p-2 rounded-lg border border-line hover:bg-pane" aria-label="Cerrar">
+            <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" stroke="currentColor"><path d="M6 6l12 12M18 6L6 18"/></svg>
+          </button>
+        </div>
+        <div class="grid gap-4 sm:grid-cols-2">
+          <div class="p-4 border border-line rounded-2xl">
+            <h3 class="font-medium mb-2">Starter</h3>
+            <ul class="text-sm space-y-1 mb-4 list-disc list-inside">
+              <li>20 mensajes/día</li>
+              <li>Sin memoria avanzada</li>
+              <li>Adjuntos ≤1MB</li>
+            </ul>
+            <div class="text-lg font-semibold mb-4">Gratis</div>
+            <button class="btn-ghost w-full" disabled>Plan actual</button>
+          </div>
+          <div class="p-4 border border-line rounded-2xl">
+            <h3 class="font-medium mb-2">Pro</h3>
+            <ul class="text-sm space-y-1 mb-4 list-disc list-inside">
+              <li>Memoria avanzada</li>
+              <li>Acciones rápidas</li>
+              <li>Adjuntos 8MB</li>
+              <li>Resúmenes automáticos</li>
+              <li>Estilos y alias</li>
+            </ul>
+            <div class="text-lg font-semibold mb-4">$12/mes</div>
+            <button id="openProCTA" class="btn-primary w-full">Suscribirse a Pro</button>
+          </div>
         </div>
       </div>
     </div>
