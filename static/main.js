@@ -68,7 +68,6 @@ const cancelDeleteBtn = $("#cancelDeleteBtn");
 const confirmDeleteBtn = $("#confirmDeleteBtn");
 
 // Billing / Planes
-const plansBtn = $("#plansBtn");
 const plansModal = $("#plansModal");
 const plansOverlay = $("#plansOverlay");
 const closePlans = $("#closePlans");
@@ -589,7 +588,6 @@ window.addEventListener("DOMContentLoaded", async () => {
   newChatBtn?.addEventListener("click", newChat);
 
   // Planes / Suscripciones
-  plansBtn?.addEventListener("click", openPlansModal);
   openProCTA?.addEventListener("click", () => console.info("TODO: integrar Stripe"));
   plansOverlay?.addEventListener("click", closePlansModal);
   closePlans?.addEventListener("click", closePlansModal);
