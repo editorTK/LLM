@@ -93,7 +93,7 @@ function renderMarkdown(md="") {
 
 const MODEL = "gpt-5-nano"; // ÚNICO modelo ahora
 // URL base del backend Flask en Railway
-const API_BASE = "https://tu-backend.railway.app"; // Reemplaza con tu URL pública
+const BACKEND_URL = "https://tu-app.up.railway.app"; // Reemplaza con tu URL pública
 const INPUT_MAX_HEIGHT = 160;
 const TIMEOUT_MS = 20000; // 20s
 
@@ -353,11 +353,8 @@ async function openChat(id) {
 // Llamada a la IA          //
 //////////////////////////////
 
-function shouldUseStreaming(state) {
-  const hasAssistant = state.messages.some(m => m.role === "assistant");
-  if (hasAssistant) return true;
-  if (state.currentChatId && state.chatsIndex.some(c => c.id === state.currentChatId)) return true;
-  return false;
+function isFirstTurn(messages) {
+  return !messages?.some(m => m.role === "assistant");
 }
 
 function pruneMessagesForBudget(messages, maxChars = 8000) {
@@ -376,80 +373,60 @@ function pruneMessagesForBudget(messages, maxChars = 8000) {
   return [head, ...kept];
 }
 
-function buildMessagesForFirstTurn(baseMessages, userText, pendingImage) {
+function extractJSON(raw="") {
+  const match = raw.match(/```json\s*([\s\S]*?)\s*```/i) || raw.match(/\{[\s\S]*\}/);
+  if (!match) return {};
+  try { return JSON.parse(match[1] || match[0]); } catch { return {}; }
+}
+
+function buildMessagesFirstTurn(baseSystem, history, userText, pendingImage) {
   const instruction = `Responde ÚNICAMENTE con JSON válido, sin texto adicional.\nEstructura:\n{\n  "answer": "texto en Markdown con la respuesta al usuario",\n  "chat_name": "título breve (máx 60 caracteres) basado en su pregunta"\n}`;
-  return [
-    ...baseMessages,
-    { role: "system", content: instruction },
-    { role: "user", content: pendingImage ? [{ type: "file", puter_path: pendingImage.path }, { type: "text", text: userText }] : userText }
-  ];
+  const base = [{ role: "system", content: baseSystem }, { role: "system", content: instruction }];
+  const hist = history.slice(1);
+  const user = pendingImage ? [{ type: "file", puter_path: pendingImage.path }, { type: "text", text: userText }] : userText;
+  return [...base, ...hist, { role: "user", content: user }];
 }
 
-function buildMessagesForNextTurns(baseMessages, userText, pendingImage) {
+function buildMessagesNextTurns(baseSystem, history, userText, pendingImage) {
   const instruction = "Responde en Markdown. Sé claro y conciso.";
-  return [
-    ...baseMessages,
-    { role: "system", content: instruction },
-    { role: "user", content: pendingImage ? [{ type: "file", puter_path: pendingImage.path }, { type: "text", text: userText }] : userText }
-  ];
+  const base = [{ role: "system", content: baseSystem }, { role: "system", content: instruction }];
+  const hist = history.slice(1);
+  const user = pendingImage ? [{ type: "file", puter_path: pendingImage.path }, { type: "text", text: userText }] : userText;
+  return [...base, ...hist, { role: "user", content: user }];
 }
 
-// Llama al backend Flask. Si `stream` es true, se espera SSE.
-async function callAI(messages, { stream }) {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), TIMEOUT_MS);
-  const resp = await fetch(`${API_BASE}/chat`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ messages, user_id: "123", stream }),
-    signal: controller.signal
+// --- Backend helpers ---
+async function callBackendNoStream(messages){
+  const r = await fetch(`${BACKEND_URL}/chat`, {
+    method:"POST", headers:{"Content-Type":"application/json"},
+    body: JSON.stringify({ messages, stream:false })
   });
-  clearTimeout(timeout);
-  if (!resp.ok) {
-    throw new Error(`HTTP ${resp.status}`);
-  }
-  if (stream) {
-    const reader = resp.body?.getReader();
-    const decoder = new TextDecoder("utf-8");
-    async function* iter() {
-      if (!reader) return;
-      let buf = "";
-      while (true) {
-        const { value, done } = await reader.read();
-        if (done) break;
-        buf += decoder.decode(value, { stream: true });
-        const parts = buf.split("\n\n");
-        buf = parts.pop() || "";
-        for (const part of parts) {
-          const line = part.trim();
-          if (line.startsWith("data:")) {
-            const data = line.slice(5).trim();
-            if (data === "[DONE]") return;
-            try {
-              const parsed = JSON.parse(data);
-              if (parsed.delta) yield { text: parsed.delta };
-            } catch {}
-          }
-        }
-      }
+  if(!r.ok) throw new Error((await r.json().catch(()=>({}))).error || `HTTP ${r.status}`);
+  return (await r.json()).text || "";
+}
+
+async function* sseReader(response){
+  const reader = response.body.getReader();
+  const dec = new TextDecoder();
+  let buf=""; for(;;){
+    const {value, done} = await reader.read(); if(done) break;
+    buf += dec.decode(value, {stream:true});
+    let i; while((i = buf.indexOf("\n\n")) >= 0){
+      const evt = buf.slice(0,i).trim(); buf = buf.slice(i+2);
+      if(!evt.startsWith("data:")) continue;
+      const payload = evt.slice(5).trim(); if(payload === "[DONE]") return;
+      try { yield JSON.parse(payload); } catch {}
     }
-    return { streamIterator: iter() };
-  } else {
-    const data = await resp.json();
-    return { text: data.answer, chatName: data.chat_name };
   }
 }
 
-async function renderAssistantStreaming(node, iterator) {
-  const t0 = performance.now();
-  let full = "";
-  for await (const part of iterator) {
-    if (part?.text) {
-      full += part.text;
-      setAssistantMarkdown(node, full);
-    }
-  }
-  return { text: full, typeMs: performance.now() - t0 };
+async function callBackendStream(messages, onDelta){
+  const r = await fetch(`${BACKEND_URL}/chat`, {
+    method:"POST", headers:{"Content-Type":"application/json"},
+    body: JSON.stringify({ messages, stream:true })
+  });
+  if(!r.ok) throw new Error((await r.json().catch(()=>({}))).error || `HTTP ${r.status}`);
+  for await (const part of sseReader(r)) if(part?.text) onDelta(part.text);
 }
 
 function appendTimingTag(node, { model, genMs, typeMs, uploadMs }) {
@@ -607,11 +584,12 @@ form?.addEventListener("submit", async (e) => {
 
   input.value = ""; input.style.height = "auto"; hideHero();
 
-  const base = pruneMessagesForBudget(state.messages);
-  const useStream = shouldUseStreaming(state);
-  const msgs = useStream
-    ? buildMessagesForNextTurns(base, text, img)
-    : buildMessagesForFirstTurn(base, text, img);
+  const firstTurn = isFirstTurn(state.messages);
+  const baseSystem = buildSystemPrompt(state.prefs);
+  const history = pruneMessagesForBudget(state.messages);
+  const msgs = firstTurn
+    ? buildMessagesFirstTurn(baseSystem, history, text, img)
+    : buildMessagesNextTurns(baseSystem, history, text, img);
 
   // almacenar mensaje de usuario para historial
   const userMsg = img
@@ -639,32 +617,30 @@ form?.addEventListener("submit", async (e) => {
   let typeMs = 0;
 
   try {
-    if (useStream) {
+    if (!firstTurn) {
       try {
-        const { streamIterator } = await callAI(msgs, { stream: true });
         let gotFirst = false;
-        const wrapped = (async function* () {
-          for await (const part of streamIterator) {
-            if (!gotFirst && part?.text) { gotFirst = true; genMs = performance.now() - t0; }
-            yield part;
-          }
-        })();
-        const r = await renderAssistantStreaming(assistantBubble, wrapped);
-        answer = r.text; typeMs = r.typeMs;
+        await callBackendStream(msgs, delta => {
+          if (!gotFirst) { gotFirst = true; genMs = performance.now() - t0; }
+          answer += delta;
+          setAssistantMarkdown(assistantBubble, answer);
+        });
+        typeMs = performance.now() - t0 - genMs;
         if (!gotFirst) genMs = performance.now() - t0;
       } catch (streamErr) {
         console.warn("stream falló, reintentando sin streaming", streamErr);
         const t1 = performance.now();
-        const { text: raw } = await callAI(msgs, { stream: false });
+        const raw = await callBackendNoStream(msgs);
         genMs = performance.now() - t1;
         const r = await renderAssistantTypewriter(assistantBubble, raw, 40, 3);
         answer = r.text; typeMs = r.typeMs;
       }
     } else {
-      const { text: raw, chatName: cName } = await callAI(msgs, { stream: false });
+      const raw = await callBackendNoStream(msgs);
       genMs = performance.now() - t0;
-      answer = raw || "";
-      chatName = (cName || "").trim();
+      const parsed = extractJSON(raw);
+      answer = parsed.answer || raw;
+      chatName = (parsed.chat_name || smartNameFrom(text)).slice(0,60);
       const r = await renderAssistantTypewriter(assistantBubble, answer, 40, 3);
       typeMs = r.typeMs;
     }
@@ -676,8 +652,8 @@ form?.addEventListener("submit", async (e) => {
     await saveConversation(state.currentChatId, state.messages);
 
     let title;
-    if (!useStream) {
-      title = (chatName || smartNameFrom(text)).slice(0, 60);
+    if (firstTurn) {
+      title = chatName;
     } else {
       const metaCurr = state.chatsIndex.find(x => x.id === state.currentChatId);
       title = metaCurr?.name || smartNameFrom(text);
@@ -725,3 +701,5 @@ function safeStringify(v){ try { return JSON.stringify(v, Object.getOwnPropertyN
 // Errores globales (para que no “mueran” los listeners)
 window.addEventListener("error", (e) => console.error("Error global:", e.error || e.message));
 window.addEventListener("unhandledrejection", (e) => console.error("Promesa sin catch:", e.reason));
+
+console.log('[build] backend: Flask(OpenAI gpt-5-nano) | first-turn: no-stream(JSON) | next-turns: SSE streaming | KV: Puter | fs: Puter | metrics:on');
