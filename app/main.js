@@ -93,7 +93,7 @@ function renderMarkdown(md="") {
 
 const MODEL = "gpt-5-nano"; // ÚNICO modelo ahora
 // URL base del backend Flask en Railway
-const BACKEND_URL = "https://llm-production-7940.up.railway.app/"; // Reemplaza con tu URL pública
+const BACKEND_URL = "llm-production-ca64.up.railway.app"; // Reemplaza con tu URL pública
 const INPUT_MAX_HEIGHT = 160;
 const TIMEOUT_MS = 20000; // 20s
 
