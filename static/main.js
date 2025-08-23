@@ -117,28 +117,108 @@ const state = {
 };
 
 //////////////////////////////
-// Entitlements (mock)     //
+// Billing / límites        //
 //////////////////////////////
 
-const ENT_KEY = "app:entitlements";
-const defaultEntitlements = { plan: "starter", daily_msg_limit: 20, used_today: 0 };
-let mockEntitlements = loadEntitlements();
+const ent = { plan: "starter", MSG_MAX: 30, IMG_MAX: 2, msg_used: 0, img_used: 0 };
 
-function loadEntitlements() {
-  try {
-    const raw = localStorage.getItem(ENT_KEY);
-    return raw ? { ...defaultEntitlements, ...JSON.parse(raw) } : { ...defaultEntitlements };
-  } catch { return { ...defaultEntitlements }; }
+async function ensureSignedIn() {
+  if (!(await puter.auth.isSignedIn())) await puter.auth.signIn();
 }
 
-function saveEntitlements() {
-  try { localStorage.setItem(ENT_KEY, JSON.stringify(mockEntitlements)); } catch {}
+async function getUserId() {
+  const u = await puter.auth.getUser();
+  return u?.uuid;
+}
+
+async function getPlan(userId) {
+  return (await puter.kv.get(`billing:plan:${userId}`)) || "starter";
+}
+
+const pad = (n) => String(n).padStart(2, "0");
+function todayUTC() {
+  const d = new Date();
+  return `${d.getUTCFullYear()}${pad(d.getUTCMonth() + 1)}${pad(d.getUTCDate())}`;
+}
+
+function keyFor(kind, userId, plan) {
+  const day = todayUTC();
+  if (plan === "pro") {
+    const seg = Math.floor(new Date().getUTCHours() / 3);
+    return kind === "message"
+      ? `usage:messages:${userId}:${day}:${seg}`
+      : `usage:images:${userId}:${day}:${seg}`;
+  }
+  return kind === "message"
+    ? `usage:messages:${userId}:${day}`
+    : `usage:images:${userId}:${day}`;
+}
+
+function limitsFor(plan) {
+  return plan === "pro"
+    ? { MSG_MAX: 500, IMG_MAX: 15 }
+    : { MSG_MAX: 30, IMG_MAX: 2 };
+}
+
+async function checkAndConsume(kind) {
+  await ensureSignedIn();
+  const userId = await getUserId();
+  const plan = await getPlan(userId);
+  const { MSG_MAX, IMG_MAX } = limitsFor(plan);
+  const max = kind === "message" ? MSG_MAX : IMG_MAX;
+  const k = keyFor(kind, userId, plan);
+  let used;
+  try {
+    used = await puter.kv.incr(k, 1);
+  } catch {
+    throw new Error("No se pudo verificar tu cuota, reintenta.");
+  }
+  if (used > max) {
+    await puter.kv.decr(k, 1);
+    const msg =
+      plan === "starter"
+        ? "Has alcanzado tu límite diario en Starter. Mejora a Pro para continuar."
+        : "Has alcanzado tu límite en Pro. Espera para que se reinicie tu cuota.";
+    throw new Error(msg);
+  }
+  return { used, max, plan, key: k, userId };
+}
+
+async function getUsage(kind) {
+  await ensureSignedIn();
+  const userId = await getUserId();
+  const plan = await getPlan(userId);
+  const k = keyFor(kind, userId, plan);
+  const { MSG_MAX, IMG_MAX } = limitsFor(plan);
+  const used = Number(await puter.kv.get(k)) || 0;
+  return { plan, used, max: kind === "message" ? MSG_MAX : IMG_MAX };
+}
+
+async function refreshEntitlements() {
+  try {
+    await ensureSignedIn();
+    const userId = await getUserId();
+    ent.plan = await getPlan(userId);
+    const msg = await getUsage("message");
+    ent.msg_used = msg.used;
+    ent.MSG_MAX = msg.max;
+    const img = await getUsage("image");
+    ent.img_used = img.used;
+    ent.IMG_MAX = img.max;
+    renderBillingUI();
+    const today = todayUTC();
+    console.log(
+      `[limits] plan:${ent.plan} | today:${today} | msg used:${ent.msg_used}/${ent.MSG_MAX} | img used:${ent.img_used}/${ent.IMG_MAX} | kv:ok | enforcement:on`
+    );
+  } catch (err) {
+    console.warn("refreshEntitlements", err);
+  }
 }
 
 function updatePlanBadge() {
   if (!accountBadge) return;
-  accountBadge.textContent = `Plan actual: ${mockEntitlements.plan === "pro" ? "Pro" : "Starter"}`;
-  if (mockEntitlements.plan === "pro") {
+  accountBadge.textContent = `Plan actual: ${ent.plan === "pro" ? "Pro" : "Starter"}`;
+  if (ent.plan === "pro") {
     accountBadge.classList.add("bg-white", "text-black");
   } else {
     accountBadge.classList.remove("bg-white", "text-black");
@@ -147,14 +227,15 @@ function updatePlanBadge() {
 
 function updateUpgradeBanner() {
   if (!upgradeBanner) return;
-  if (mockEntitlements.plan === "starter") upgradeBanner.classList.remove("hidden");
+  if (ent.plan === "starter") upgradeBanner.classList.remove("hidden");
   else upgradeBanner.classList.add("hidden");
 }
 
 function updateUsage() {
-  if (usageHint) usageHint.textContent = `${mockEntitlements.used_today}/${mockEntitlements.daily_msg_limit} mensajes hoy`;
+  if (usageHint)
+    usageHint.textContent = `${ent.msg_used}/${ent.MSG_MAX} mensajes hoy`;
   if (!limitToast) return;
-  if (mockEntitlements.plan === "starter" && mockEntitlements.used_today >= mockEntitlements.daily_msg_limit) {
+  if (ent.plan === "starter" && ent.msg_used >= ent.MSG_MAX) {
     limitToast.classList.remove("hidden");
   } else {
     limitToast.classList.add("hidden");
@@ -162,15 +243,15 @@ function updateUsage() {
 }
 
 function updateProLocks() {
-  document.querySelectorAll('[data-pro]').forEach(el => {
+  document.querySelectorAll('[data-pro]').forEach((el) => {
     const lock = el.querySelector('.lock-icon');
-    if (mockEntitlements.plan === 'pro') {
+    if (ent.plan === 'pro') {
       el.classList.remove('pro-locked');
       el.removeAttribute('data-tooltip');
       lock?.classList.add('hidden');
     } else {
       el.classList.add('pro-locked');
-      el.setAttribute('data-tooltip','Disponible en Pro');
+      el.setAttribute('data-tooltip', 'Disponible en Pro');
       lock?.classList.remove('hidden');
     }
   });
@@ -185,21 +266,25 @@ function renderBillingUI() {
 
 function openPlansModal() {
   plansModal?.classList.remove('hidden');
-  setTimeout(() => plansModal?.querySelector('button, [href], input, textarea, [tabindex]')?.focus(), 0);
+  setTimeout(() =>
+    plansModal?.querySelector('button, [href], input, textarea, [tabindex]')?.focus(),
+  0);
 }
 function closePlansModal() { plansModal?.classList.add('hidden'); }
 
 // Helpers para pruebas en consola
-window.__setPlan = (p) => {
+window.__forcePlan = async (p) => {
   if (p !== 'starter' && p !== 'pro') return;
-  mockEntitlements.plan = p;
-  saveEntitlements();
-  renderBillingUI();
+  const userId = await getUserId();
+  await puter.kv.set(`billing:plan:${userId}`, p);
+  await refreshEntitlements();
 };
-window.__setUsed = (n) => {
-  mockEntitlements.used_today = Math.max(0, Number(n) || 0);
-  saveEntitlements();
-  renderBillingUI();
+
+window.__setUsage = async (kind, n) => {
+  const userId = await getUserId();
+  const k = keyFor(kind, userId, ent.plan);
+  await puter.kv.set(k, Number(n));
+  await refreshEntitlements();
 };
 
 //////////////////////////////
@@ -554,13 +639,19 @@ window.addEventListener("DOMContentLoaded", async () => {
     const signed = await puter.auth.isSignedIn();
     if (!signed) signInBtn?.classList.remove("hidden");
   } catch {}
-  signInBtn?.addEventListener("click", async () => {
-    try { await puter.auth.signIn(); signInBtn.classList.add("hidden"); }
-    catch { alert("No se pudo iniciar sesión en Puter."); }
-  });
+    signInBtn?.addEventListener("click", async () => {
+      try { await puter.auth.signIn(); signInBtn.classList.add("hidden"); }
+      catch { alert("No se pudo iniciar sesión en Puter."); }
+    });
 
-  // Abrir/cerrar sidebar (SIN BLUR)
-  menuBtn?.addEventListener("click", openSidebar);
+    await refreshEntitlements();
+    document.addEventListener('visibilitychange', () => {
+      if (!document.hidden) refreshEntitlements();
+    });
+    setInterval(refreshEntitlements, 5 * 60 * 1000);
+
+    // Abrir/cerrar sidebar (SIN BLUR)
+    menuBtn?.addEventListener("click", openSidebar);
   closeSidebarBtn?.addEventListener("click", closeSidebar);
   sidebarOverlay?.addEventListener("click", closeSidebar);
 
@@ -596,14 +687,14 @@ window.addEventListener("DOMContentLoaded", async () => {
   });
   document.querySelectorAll('[data-action="upgrade"]').forEach(btn => btn.addEventListener('click', openPlansModal));
   limitToast?.querySelector('[data-action="dismiss"]')?.addEventListener('click', () => limitToast.classList.add('hidden'));
-  document.querySelectorAll('[data-pro]').forEach(el => {
-    el.addEventListener('click', (ev) => {
-      if (mockEntitlements.plan !== 'pro') { ev.preventDefault(); openPlansModal(); }
+    document.querySelectorAll('[data-pro]').forEach(el => {
+      el.addEventListener('click', (ev) => {
+        if (ent.plan !== 'pro') { ev.preventDefault(); openPlansModal(); }
+      });
     });
-  });
 
-  renderBillingUI();
-  console.log(`[billing-ui] plan: ${mockEntitlements.plan} | used_today: ${mockEntitlements.used_today}/${mockEntitlements.daily_msg_limit} | modales: ok | banners: ok | toasts: ok`);
+    renderBillingUI();
+    console.log(`[billing-ui] plan: ${ent.plan} | msg used: ${ent.msg_used}/${ent.MSG_MAX} | modales: ok | banners: ok | toasts: ok`);
 
   // Adjuntos
   uploadImgBtn?.addEventListener("click", () => fileInput.click());
@@ -689,17 +780,33 @@ form?.addEventListener("submit", async (e) => {
   const text = input.value.trim();
   if (!text) return;
 
-  if (!state.currentChatId) newChat();
+    if (!state.currentChatId) newChat();
 
-  mockEntitlements.used_today++;
-  saveEntitlements();
-  renderBillingUI();
+    const img = state.pendingImage;
+    let imgQuota, msgQuota;
+    try {
+      if (img) {
+        imgQuota = await checkAndConsume('image');
+        ent.img_used = imgQuota.used;
+        ent.IMG_MAX = imgQuota.max;
+        ent.plan = imgQuota.plan;
+      }
+      msgQuota = await checkAndConsume('message');
+      ent.msg_used = msgQuota.used;
+      ent.MSG_MAX = msgQuota.max;
+      ent.plan = msgQuota.plan;
+      renderBillingUI();
+    } catch (limitErr) {
+      console.warn(limitErr);
+      alert(limitErr.message);
+      renderBillingUI();
+      return;
+    }
 
-  const img = state.pendingImage;
-  addUserBubble(text, img?.preview || null, img?.name);
-  const assistantBubble = addAssistantSkeleton();
+    addUserBubble(text, img?.preview || null, img?.name);
+    const assistantBubble = addAssistantSkeleton();
 
-  input.value = ""; input.style.height = "auto"; hideHero();
+    input.value = ""; input.style.height = "auto"; hideHero();
 
   const firstTurn = isFirstTurn(state.messages);
   const baseSystem = buildSystemPrompt(state.prefs);
@@ -784,17 +891,22 @@ form?.addEventListener("submit", async (e) => {
     appendTimingTag(assistantBubble, { model: MODEL, genMs, typeMs, uploadMs });
     log({ model: MODEL, genMs, typeMs, uploadMs });
 
-  } catch (err) {
-    clearTimeout(slowTimer);
-    const info = classifyError(err);
-    setAssistantError(
-      assistantBubble,
-      info.title,
-      `${info.hint}${info.raw ? ` · Detalle: ${info.raw}` : ""}`
-    );
-    console.error("/chat error:", err);
-  }
-});
+    } catch (err) {
+      clearTimeout(slowTimer);
+      try {
+        if (msgQuota) { await puter.kv.decr(msgQuota.key, 1); ent.msg_used--; }
+        if (imgQuota) { await puter.kv.decr(imgQuota.key, 1); ent.img_used--; }
+      } catch {}
+      renderBillingUI();
+      const info = classifyError(err);
+      setAssistantError(
+        assistantBubble,
+        info.title,
+        `${info.hint}${info.raw ? ` · Detalle: ${info.raw}` : ""}`
+      );
+      console.error("/chat error:", err);
+    }
+  });
 
 //////////////////////////////
 // Varias utilidades más    //
