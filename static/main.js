@@ -1,5 +1,4 @@
 /* main.js — versión simplificada
- * - Sin o3
  * - Solo gpt-5-nano (rápido)
  * - Un solo archivo (sin imports)
  * - KV usando kv.del() para borrar
