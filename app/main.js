@@ -91,7 +91,9 @@ function renderMarkdown(md="") {
 // Estado global           //
 //////////////////////////////
 
-const MODEL = "gpt-4o-mini"; // ÚNICO modelo ahora
+const MODEL = "gpt-5-nano"; // ÚNICO modelo ahora
+// URL base del backend Flask en Railway
+const API_BASE = "https://tu-backend.railway.app"; // Reemplaza con tu URL pública
 const INPUT_MAX_HEIGHT = 160;
 const TIMEOUT_MS = 20000; // 20s
 
@@ -392,13 +394,50 @@ function buildMessagesForNextTurns(baseMessages, userText, pendingImage) {
   ];
 }
 
+// Llama al backend Flask. Si `stream` es true, se espera SSE.
 async function callAI(messages, { stream }) {
-  if (!window.puter?.ai?.chat) throw new Error("Puter.ai.chat no está disponible.");
-  const req = puter.ai.chat(messages, false, { model: MODEL, stream });
-  const timeout = new Promise((_, rej) => setTimeout(() => rej(new Error("tardó demasiado")), TIMEOUT_MS));
-  const resp = await Promise.race([req, timeout]);
-  if (stream) return { streamIterator: resp };
-  return { text: normalizeText(resp) };
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), TIMEOUT_MS);
+  const resp = await fetch(`${API_BASE}/chat`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ messages, user_id: "123", stream }),
+    signal: controller.signal
+  });
+  clearTimeout(timeout);
+  if (!resp.ok) {
+    throw new Error(`HTTP ${resp.status}`);
+  }
+  if (stream) {
+    const reader = resp.body?.getReader();
+    const decoder = new TextDecoder("utf-8");
+    async function* iter() {
+      if (!reader) return;
+      let buf = "";
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buf += decoder.decode(value, { stream: true });
+        const parts = buf.split("\n\n");
+        buf = parts.pop() || "";
+        for (const part of parts) {
+          const line = part.trim();
+          if (line.startsWith("data:")) {
+            const data = line.slice(5).trim();
+            if (data === "[DONE]") return;
+            try {
+              const parsed = JSON.parse(data);
+              if (parsed.delta) yield { text: parsed.delta };
+            } catch {}
+          }
+        }
+      }
+    }
+    return { streamIterator: iter() };
+  } else {
+    const data = await resp.json();
+    return { text: data.answer, chatName: data.chat_name };
+  }
 }
 
 async function renderAssistantStreaming(node, iterator) {
@@ -426,26 +465,7 @@ function appendTimingTag(node, { model, genMs, typeMs, uploadMs }) {
   node.appendChild(tag);
 }
 
-function normalizeText(resp) {
-  if (typeof resp === "string") return resp;
-  if (resp?.message?.content) return String(resp.message.content);
-  if (resp?.text) return String(resp.text);
-  if (resp?.output_text) return String(resp.output_text);
-  try { return JSON.stringify(resp); } catch { return String(resp); }
-}
-
-function extractJSON(raw) {
-  const trimmed = String(raw).trim()
-    .replace(/^```json\s*/i, "")
-    .replace(/```$/i, "");
-  const first = trimmed.indexOf("{");
-  const last  = trimmed.lastIndexOf("}");
-  if (first >= 0 && last > first) {
-    const slice = trimmed.slice(first, last + 1);
-    try { return JSON.parse(slice); } catch {}
-  }
-  try { return JSON.parse(trimmed); } catch { return null; }
-}
+// El backend ya entrega JSON parseado, no se requieren helpers extra.
 
 //////////////////////////////
 // Eventos principales      //
@@ -641,11 +661,10 @@ form?.addEventListener("submit", async (e) => {
         answer = r.text; typeMs = r.typeMs;
       }
     } else {
-      const { text: raw } = await callAI(msgs, { stream: false });
+      const { text: raw, chatName: cName } = await callAI(msgs, { stream: false });
       genMs = performance.now() - t0;
-      const parsed = extractJSON(raw);
-      answer = parsed?.answer ?? raw ?? "";
-      chatName = (parsed?.chat_name ?? "").trim();
+      answer = raw || "";
+      chatName = (cName || "").trim();
       const r = await renderAssistantTypewriter(assistantBubble, answer, 40, 3);
       typeMs = r.typeMs;
     }
@@ -680,7 +699,7 @@ form?.addEventListener("submit", async (e) => {
       info.title,
       `${info.hint}${info.raw ? ` · Detalle: ${info.raw}` : ""}`
     );
-    console.error("puter.ai.chat error:", err);
+    console.error("/chat error:", err);
   }
 });
 
